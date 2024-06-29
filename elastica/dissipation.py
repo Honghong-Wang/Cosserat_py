@@ -86,6 +86,8 @@ class AnalyticalLinearDamper(DamperBase):
 
         \\pmb{\\omega}^{n+1} = \\pmb{\\omega}^n \\exp \\left( - \\frac{{\\nu}~m~dt } { \\mathbf{J}} \\right)
 
+    Updated based on `#354 <https://github.com/GazzolaLab/PyElastica/issues/354>`_.
+
     Examples
     --------
     How to set analytical linear damper for rod or rigid body:
@@ -133,32 +135,36 @@ class AnalyticalLinearDamper(DamperBase):
             Time-step of simulation
         """
         super().__init__(**kwargs)
-        # Compute the damping coefficient for translational velocity
-        nodal_mass = self._system.mass
-        self.translational_damping_coefficient = np.exp(-damping_constant * time_step)
+        # Compute proper scaling for the exponential damping coefficient
+        self.damping_coefficient = np.exp(-damping_constant * time_step)
 
-        # Compute the damping coefficient for exponential velocity
-        if self._system.ring_rod_flag:
-            element_mass = nodal_mass
-        else:
-            element_mass = 0.5 * (nodal_mass[1:] + nodal_mass[:-1])
-            element_mass[0] += 0.5 * nodal_mass[0]
-            element_mass[-1] += 0.5 * nodal_mass[-1]
-        self.rotational_damping_coefficient = np.exp(
-            -damping_constant
-            * time_step
-            * element_mass
-            * np.diagonal(self._system.inv_mass_second_moment_of_inertia).T
+    def dampen_rates(self, rod: RodType, time: np.float64) -> None:
+        np_dampen_rates(
+            rod.velocity_collection,
+            rod.omega_collection,
+            self.damping_coefficient,
+            rod.dilatation,
         )
 
-    def dampen_rates(self, system: RodType, time: np.float64) -> None:
-        system.velocity_collection[:] = (
-            system.velocity_collection * self.translational_damping_coefficient
-        )
 
-        system.omega_collection[:] = system.omega_collection * np.power(
-            self.rotational_damping_coefficient, system.dilatation
-        )
+@njit(cache=True)
+def np_dampen_rates(
+    velocity: NDArray[np.float64],
+    omega: NDArray[np.float64],
+    damping_coefficient: np.float64,
+    dilatation: NDArray[np.float64]
+) -> None:
+    """
+    Dampen rates (velocity and omega) of a rod object in numba njit decorator
+    """
+
+    number_of_nodes = velocity.shape[1]
+    for i in range(number_of_nodes):
+        velocity[:, i] = velocity[:, i] * damping_coefficient
+
+    number_of_elements = omega.shape[1]
+    for i in range(number_of_elements):
+        omega[:, i] = omega[:, i] * damping_coefficient ** dilatation[i]
 
 
 class LaplaceDissipationFilter(DamperBase):
